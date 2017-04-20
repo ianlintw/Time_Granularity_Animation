@@ -1,4 +1,4 @@
-**Time Granulariry Animation in D3**
+# Time Granulariry Animation in D3
 This is a project demonstrating time granularity animation based on [the React tutorial](https://github.com/reactjs/react-tutorial) and d3 animation and brush feature.
 
 <img src="demo.gif"/>
