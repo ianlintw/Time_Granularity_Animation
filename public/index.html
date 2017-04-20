@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Time Granularity Animation</title>
+    <!-- Not present in the tutorial. Just for basic styling. -->
+    <!--link rel="stylesheet" href="css/base.css" /-->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/0.14.8/react.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/0.14.8/react-dom.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-core/5.6.16/browser.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/2.2.2/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/0.3.5/marked.min.js"></script>
+    <script src="https://d3js.org/d3.v3.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js"></script>
+    <style>
+      svg {
+        font: 10px sans-serif;
+      }
+
+      path.line {
+        fill: none;
+        stroke: steelblue;
+      }
+
+      circle.dot {
+        fill: steelblue;
+        stroke: #cccccc;
+      }
+
+      path.line, circle.dot {
+        stroke-width: 1px;
+        clip-path: url(#clip);
+      }
+
+      .axis path,
+      .axis line {
+        fill: none;
+        stroke: #000;
+        shape-rendering: crispEdges;
+      }
+
+      .tick line {
+        stroke: lightgrey;
+        opacity: 0.7;
+      }
+
+      .brush .extent {
+        stroke: #fff;
+        fill-opacity: .125;
+      }
+      .resize rect {
+        fill: #222222;
+        fill-opacity: .4;
+      }
+
+    </style>
+  </head>
+  <body>
+    <div id="content"></div>
+    <!--script type="text/babel" src="scripts/example.js"></script-->
+    <script type="text/babel">
+      var cDates = [], cData = [];//Separate date and data in different arrays with the same index
+      var weeks = [], vWeeks = [];
+
+      var d3Chart = {};
+
+      d3Chart.create = function(el, props, state) {//Create basic framework of the chart
+        //Fields Initialization
+        this.width = props.width;
+        this.height = props.height;
+        this.margin_f = {top: 10, right: 10, bottom: 180, left: 60},
+        this.margin_c = {top: this.height - this.margin_f.bottom + 110, right: 10, bottom: 20, left: 60},
+        this.inner_width = this.width - this.margin_f.left - this.margin_f.right,
+        this.height_f = this.height - this.margin_f.top - this.margin_f.bottom,
+        this.height_c = this.height - this.margin_c.top - this.margin_c.bottom;
+
+        this.x_f = d3.time.scale().range([0, this.inner_width]),
+        this.x_c = d3.time.scale().range([0, this.inner_width]),
+        this.y_f = d3.scale.linear().range([this.height_f, 0]),
+        this.y_c = d3.scale.linear().range([this.height_c, 0]);
+
+        this.xAxis_f = d3.svg.axis().scale(this.x_f).orient("bottom").tickFormat(d3.time.format("%b %d %Y")),
+        this.xAxis_c = d3.svg.axis().scale(this.x_c).orient("bottom"),
+        this.yAxis_f = d3.svg.axis().scale(this.y_f).orient("left").tickFormat(d3.format(".0%"));
+
+        this.line_f = d3.svg.line()
+          .x(function(d) { return this.x_f(d); }.bind(this))
+          .y(function(d, i) { return this.y_f(cData[i].scTotal/cData[i].sTotal); }.bind(this));
+
+        this.line_c = d3.svg.line()
+          .x(function(d) { return this.x_c(d); }.bind(this))
+          .y(function(d, i) { return this.y_c(cData[i].scTotal/cData[i].sTotal); }.bind(this));
+
+        var svg = d3.select(el).append("svg")
+        .attr("width", props.width)
+        .attr("height", props.height);
+
+        svg.append("defs").append("clipPath")
+            .attr("id", "clip")
+           .append("rect")
+            .attr("width", this.inner_width)
+            .attr("height", this.height_f);
+
+        var focus = svg.append("g")
+            .attr("class", "focus")
+            .attr("transform", "translate(" + this.margin_c.left + "," + (this.height_c + 40) + ")");
+
+        var context = svg.append("g")
+            .attr("class", "context")
+            .attr("transform", "translate(" + this.margin_f.left + "," + this.margin_f.top + ")");
+
+        this.update(el, state, focus, context);
+      };
+
+      d3Chart.update = function(el, state, focus, context) {//Decide the content of the chart
+        var brush = d3.svg.brush()
+        .x(this.x_c)
+        .on("brush", brushed.bind(this));
+
+        d3.json("session_fact.json", function(error, json){
+          if(error){
+            console.warn(error);
+          }
+          json.forEach(function(entry){
+            var date = d3.time.format.utc("%Y-%m-%d %H:%M:%S UTC").parse(entry.session_end_ts);
+            date = new Date(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+            var complete = entry['completed_pmt(Y/N)'] === "TRUE"? true: false;
+            if(cDates.findIndex(function(d, i){ return +d == +date;}) == -1){
+              cDates.push(date);
+              //console.log(cDates.indexOf(date));//sometimes it works, sometimes it doesn't?
+              cData[cDates.findIndex(function(d, i){ return +d == +date;})] = {sTotal: 1, scTotal: complete? 1: 0};
+            }
+            else{
+              cData[cDates.findIndex(function(d, i){ return +d == +date;})].sTotal++;
+              if(complete){
+                cData[cDates.findIndex(function(d, i){ return +d == +date;})].scTotal++;
+              } 
+            }
+          });
+
+          this.x_c.domain(d3.extent(cDates));
+          var values = [];
+          cData.forEach(function(d){
+            values.push(d.scTotal/d.sTotal);
+          });
+          this.y_c.domain([0, d3.max(values)]);
+          
+          brush.extent(this.x_c.domain());
+          this.lastBrushExtent = brush.extent();
+
+          this.x_f.domain(brush.extent());
+          this.y_f.domain(this.y_c.domain());
+
+          focus.append("g")
+              .attr("class", "x axis")
+              .attr("transform", "translate(0," + this.height_f + ")")
+              .call(this.xAxis_f.ticks(cDates.length).tickSize(-this.height_f, 0, 0))
+              .selectAll(".tick text")
+              .attr("x", 40)
+              .attr("y", -5)
+              .attr("transform", "rotate(90)");
+
+          focus.append("text")
+              .attr("class", "x-axis-label")
+              .attr("text-anchor", "middle")  // transform is applied to the anchor
+              .attr("transform", "translate("+ (this.inner_width/2) +","+(this.height_f + this.margin_f.bottom/2)+")")
+              .text("Days");
+
+          focus.append("g")
+              .attr("class", "y axis")
+              .call(this.yAxis_f.tickSize(-this.inner_width, 0, 0));
+
+          focus.append("text")
+              .attr("class", "y-axis-label")
+              .attr("text-anchor", "middle")  // transform is applied to the anchor
+              .attr("transform", "translate("+ -(this.margin_f.left/2 + 5) +","+(this.height_f/2)+")rotate(-90)")
+              .text("Conversion Rate");
+
+          focus.append("path")
+              .datum(cDates)
+              .attr("class", "line")
+              .attr("d", this.line_f);
+
+          focus.selectAll("dot")
+              .data(cDates)
+              .enter().append("circle")
+              .classed("dot", true)
+              .attr("cx", function(d){ return this.x_f(d); }.bind(this))
+              .attr("cy", function(d, i){ return this.y_f(cData[i].scTotal/cData[i].sTotal); }.bind(this))
+              .attr("r", 3);
+
+          context.append("g")
+              .attr("class", "x axis")
+              .attr("transform", "translate(0," + this.height_c + ")")
+              .call(this.xAxis_c);
+
+          context.append("path")
+              .datum(cDates)
+              .attr("class", "line")
+              .attr("d", this.line_c);
+
+          context.append("g")
+              .attr("class", "x brush")
+              .call(brush)
+            .selectAll("rect")
+              .attr("y", -6)
+              .attr("height", this.height_c + 7);
+
+          context.selectAll(".resize rect")
+            .style("visibility", "visible");
+
+          var timeout = setTimeout(function() {
+            weeks = cDates.map(function(d){ return d3.time.week(new Date(d)); });
+            this.x_f.domain(d3.extent(weeks));
+            focus.select(".x.axis")
+                  .transition().duration(2500).ease("sin-in-out")
+                  .call(this.xAxis_f.ticks(_.uniq(weeks, function(d){ return +d; }).length))
+                  .selectAll(".tick text")
+                  .attr("x", 0)
+                  .attr("y", 9)
+                  .attr("transform", "rotate(0)");
+            focus.select(".x-axis-label")
+                  .transition().duration(2500).ease("sin-in-out")
+                  .attr("transform", "translate("+ (this.inner_width/2) +","+(this.height_f + this.margin_f.bottom/5)+")")
+                  .text("Weeks");
+
+            //calculating week average conversion rate
+            var data = cData.slice(0), vIdx = 0;
+            for(var i = 1; i < weeks.length; i++){
+              if(+weeks[i] == +weeks[i-1]){
+                for(var j = vIdx; j <= i; j++){
+                  data[j].scTotal += data[i].scTotal;
+                  data[j].sTotal += data[i].sTotal;
+                }
+                data[i].scTotal = data[i-1].scTotal;
+                data[i].sTotal = data[i-1].sTotal;
+              }
+              else {
+                vIdx = i;
+              }
+            }
+            data.forEach(function(d){
+              vWeeks.push(d.scTotal/d.sTotal);
+            });
+            this.y_f.domain(d3.extent(vWeeks));
+            focus.select(".y.axis").transition().duration(2500).ease("sin-in-out")
+              .call(this.yAxis_f);
+            focus.selectAll(".dot").transition().duration(2500)
+              .attr("cx", function(d, i){ return this.x_f(weeks[i]); }.bind(this))
+              .attr("cy", function(d, i){ return this.y_f(vWeeks[i]); }.bind(this))
+              .attr("r", 4)
+            focus.select(".line").transition().duration(2500)
+              .attr("d", d3.svg.line()
+                .x(function(d, i) { return this.x_f(weeks[i]); }.bind(this))
+                .y(function(d, i) { return this.y_f(vWeeks[i]); }.bind(this)));
+
+            this.x_c.domain(this.x_f.domain());
+            context.select(".x.axis")
+                  .transition().duration(2500).ease("sin-in-out")
+                  .call(this.xAxis_c.ticks(_.uniq(weeks, function(d){ return +d; }).length));
+            this.y_c.domain(this.y_f.domain());
+            context.select(".line").transition().duration(2500)
+              .attr("d", d3.svg.line()
+                .x(function(d, i) { return this.x_c(weeks[i]); }.bind(this))
+                .y(function(d, i) { return this.y_c(vWeeks[i]); }.bind(this)));
+
+          }.bind(this), 3000);
+
+        }.bind(this));
+
+        function brushed(){
+          if(brush.empty()){//Do not cancel the current range
+            brush.extent(this.lastBrushExtent);
+            context.select(".x.brush").call(brush);//Because brush.extent() won't redraw automatically
+          }
+          else {
+            this.lastBrushExtent = brush.extent().map(function(d){ return d3.time.week(new Date(d)); });
+            this.x_f.domain(this.lastBrushExtent);
+          }
+          focus.select(".line").attr("d", d3.svg.line()
+                .x(function(d, i) { return this.x_f(weeks[i]); }.bind(this))
+                .y(function(d, i) { return this.y_f(vWeeks[i]); }.bind(this)));
+          focus.selectAll(".dot").attr("cx", function(d, i){ return this.x_f(weeks[i]); }.bind(this))
+          //focus.select(".x.axis").call(this.xAxis_f);//How to customize label when different granularity?
+          focus.select(".x.axis").call(this.xAxis_f
+                                        .ticks(_.uniq(weeks, function(d){ return +d; }).length)
+                                        .tickValues(_.uniq(weeks, function(d){ return +d; }))//use tickValues() instead of scale's default tick generator
+                                      );
+        }
+
+      };
+
+      d3Chart.destroy = function(el) {
+        // Any clean-up would go here
+        // in this example there is nothing to do
+      };
+
+      var Chart = React.createClass({
+        propTypes: {
+          data: React.PropTypes.array,
+          domain: React.PropTypes.object
+        },
+
+        componentDidMount: function() {
+          var el = ReactDOM.findDOMNode(this);
+          d3Chart.create(el, {
+            width: 960,
+            height: 500
+          }, this.getChartState());
+        },
+
+        componentDidUpdate: function() {
+          var el = ReactDOM.findDOMNode(this);
+          d3Chart.update(el, this.getChartState());
+        },
+
+        getChartState: function() {
+          return {
+            data: this.props.data,
+            domain: this.props.domain
+          };
+        },
+
+        componentWillUnmount: function() {
+          var el = ReactDOM.findDOMNode(this);
+          d3Chart.destroy(el);
+        },
+
+        render: function() {
+          return (
+            <div className="Chart"></div>
+          );
+        }
+      });
+
+      var sampleData = [
+        {id: '5fbmzmtc', x: 7, y: 41, z: 6},
+        {id: 's4f8phwm', x: 11, y: 45, z: 9},
+        {id: '6fbmzmtc', x: 3, y: 3, z: 1},
+        {id: '74f8phwm', x: 20, y: 60, z: 3},
+      ];
+
+      var App = React.createClass({
+        getInitialState: function() {
+          return {
+            data: sampleData,
+            domain: {x: [0, 30], y: [0, 100]}
+          };
+        },
+
+        render: function() {
+          return (
+            <div className="App">
+              <Chart
+                data={this.state.data}
+                domain={this.state.domain} />
+            </div>
+          );
+        }
+      });
+
+      ReactDOM.render(
+        <App />, document.getElementById('content')
+      );
+    </script>
+  </body>
+</html>
